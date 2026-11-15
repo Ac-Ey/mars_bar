@@ -105,3 +105,43 @@ The map assumes 10 meters per percentage unit (a schematic 1 km square). The 50�
 HAB-01 is assumed to provide oxygen and radiation shelter based on its existing scenario description. RVR-04 only provides oxygen support, with accessible spare tanks assumed. Surface transit during a flare is still exposed: there is no radiation-dose integration or shielding validation. The whole surface radiation overlay cannot be avoided by terrestrial routing; the planner heads to shelter while warning about exposure.
 
 Walking speed and oxygen rates are constant; terrain-driven exertion, tank pressure, equipment failure, continuing leaks, battery limits, and actual physiology are not modeled. The movement button teleports between two demo positions without time progression or automatic oxygen depletion. Remaining O₂ is the editable scenario supply, not a live sensor stream. The normal return destination is HAB-01; the green multi-stop reference traverse is not treated as the calculator's mission itinerary.
+
+## Science Operations Deck
+The navigator now supports hands-on field science as well as safe traversal. A **Science Operations** deck below the map has three linked tools. All values are illustrative simulation data based on published Jezero Crater mineralogy; they are not calibrated NASA measurements.
+### 1. Interactive Field Science & Sample Logger
+Collect and log science at each waypoint (HAB-01, RVR-04, SCI-A, SCI-B):
+- **Sample collection**
+  - **Drill Core**: only at science targets (SCI-A, SCI-B). 0.12 kg per tube.
+  - **Regolith Scoop**: at any waypoint. 0.09 kg per tube.
+- **Suit sample tube capacity**: a 10-tube bar fills as you collect (e.g. `4 / 10 tubes`). Total **payload mass** is tracked live.
+- **Virtual proximity instruments**
+  - **SHERLOC** (deep-UV Raman): looks for organic signatures (e.g. a Raman G-band candidate at SCI-A).
+  - **PIXL** (X-ray fluorescence): bar chart of the main rock chemistry (SiO₂, FeO, MgO, SO₃, CaO).
+  - **SuperCam** (LIBS + VISIR): elemental and hydration confirmation.
+- **Science time budget**: each action adds simulated EVA minutes (core 12, scoop 5, SHERLOC 6, PIXL 8, SuperCam 3).
+- **Field notes**: timestamped notes for each waypoint.
+- **Sample manifest**: a list of every tube (waypoint, type, mass, time), with an option to discard.
+- **Persistent**: samples, scans and notes are saved in `localStorage` and survive a page reload.
+- **Contingency lock**: all science actions are disabled during a Solar Flare or O₂ Leak emergency.
+- 
+### 2. CRISM / PIXL Spectral Signature Analyzer
+Explains *why* a target has its biosignature priority:
+- **Reflectance spectrum (1.0–2.6 µm)**: a mixed spectrum for the selected waypoint, with an optional overlay of each mineral's individual curve.
+- **Interactive absorption bands**: hover a marked band to see its cause, e.g.
+  - `1.41 µm`: Si-OH / H₂O overtone
+  - `1.91 µm`: molecular H₂O
+  - `2.21 µm`: Si-OH (diagnostic for hydrated silica)
+  - `2.30 / 2.50 µm`: carbonate doublet (diagnostic for Mg-carbonates)
+- **Mineral composition breakdown**: percentage of each mineral (e.g. SCI-A: 46% hydrated silica, 31% Fe/Mg smectite, 23% sulfate).
+- **Biosignature priority breakdown**: the score (e.g. **98%** for SCI-A) is split into Aqueous Alteration, Organic Preservation, Context Value and Access/Safety, with a short scientific explanation.
+- 
+### 3. Science Priority Scoring Along Routes (Science Yield Score)
+Compare routes by **Safety vs. Science Return** for any waypoint or custom map target:
+- **Two A\* routes** are computed from the astronaut's position:
+  - **Safety-Optimal**: the standard shortest safe path.
+  - **Science-Weighted**: the path is pulled toward the CRISM deposits (Hydrated Silica, Mg-Carbonates) by lowering the travel cost of cells near them.
+- **Hazards are never relaxed**: both routes stay out of slope no-go zones and dust traps.
+- **Science Score (0–100)** = 75% weighted closest approach to each deposit + 25% distance walked inside deposit zones (full credit at 300 m).
+- **Safety Score (0–100)** = 70% minimum clearance from hazards (full credit at 80 m) + 30% distance efficiency compared with the safest route.
+- **Per-deposit comparison**: e.g. `Hydrated Silica 40% → 100% proximity`.
+- **Map overlay**: select the Science-Weighted card to draw its route in pink. The mineral layer also shows each deposit's influence zone (2.5× its outline).

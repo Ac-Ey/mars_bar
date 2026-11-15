@@ -145,3 +145,4 @@ Compare routes by **Safety vs. Science Return** for any waypoint or custom map t
 - **Safety Score (0–100)** = 70% minimum clearance from hazards (full credit at 80 m) + 30% distance efficiency compared with the safest route.
 - **Per-deposit comparison**: e.g. `Hydrated Silica 40% → 100% proximity`.
 - **Map overlay**: select the Science-Weighted card to draw its route in pink. The mineral layer also shows each deposit's influence zone (2.5× its outline).
+

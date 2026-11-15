@@ -1,8 +1,15 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { WAYPOINTS, NOMINAL_PATH } from './missionData.js';
 import { runAStarRoute, SLOPE_HAZARDS, DUST_TRAP } from './navigation.js';
 import { planEmergency, planMission, SIMULATION_MODEL } from './missionSafety.js';
 import { EmergencyPanel, OxygenPanel } from './SafetyPanels.jsx';
+import { MINERAL_DEPOSITS, TUBE_CAPACITY, TUBE_MASS_KG, compareRoutes } from './science.js';
+import { FieldSciencePanel, SpectralAnalyzer, RouteSciencePanel } from './SciencePanels.jsx';
+
+const loadStored = (key, fallback) => {
+  try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
+};
+const clock = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 import {
   Layers,
   ShieldAlert,
@@ -58,6 +65,23 @@ export default function App() {
     start: astronautPos, emergencyType: emergencyMode, waypoints: WAYPOINTS,
     availableOxygenPct, reservePct,
   }), [astronautPos, emergencyMode, availableOxygenPct, reservePct]);
+
+  // ---- Field science state (persisted across reloads) ----
+  const [samples, setSamples] = useState(() => loadStored('ares.samples', []));
+  const [scans, setScans] = useState(() => loadStored('ares.scans', {}));
+  const [notes, setNotes] = useState(() => loadStored('ares.notes', []));
+  const [routeChoice, setRouteChoice] = useState('safest');
+  useEffect(() => { localStorage.setItem('ares.samples', JSON.stringify(samples)); }, [samples]);
+  useEffect(() => { localStorage.setItem('ares.scans', JSON.stringify(scans)); }, [scans]);
+  useEffect(() => { localStorage.setItem('ares.notes', JSON.stringify(notes)); }, [notes]);
+
+  const routeComparison = useMemo(() => compareRoutes(astronautPos, customTarget ?? selectedWp),
+    [astronautPos, customTarget, selectedWp]);
+
+  const collectSample = (type) => setSamples((prev) => prev.length >= TUBE_CAPACITY ? prev : [...prev,
+    { id: `${Date.now()}-${prev.length}`, wpId: selectedWp.id, wpCode: selectedWp.code, type, massKg: TUBE_MASS_KG[type], time: clock() }]);
+  const runScan = (instrument) => setScans((prev) => ({ ...prev, [selectedWp.id]: { ...(prev[selectedWp.id] ?? {}), [instrument]: clock() } }));
+  const addNote = (text) => setNotes((prev) => [{ id: Date.now(), wpId: selectedWp.id, text, time: clock() }, ...prev]);
 
   const selectWaypoint = (wp) => {
     setSelectedWp(wp);
@@ -132,6 +156,7 @@ export default function App() {
     ? route.points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ') : '';
   const customSvgPath = toSvgPath(missionPlan.outboundRoute);
   const emergencySvgPath = toSvgPath(emergencyPlan?.route);
+  const scienceSvgPath = toSvgPath(routeComparison.science.route);
   const remainingWalkMinutes = availableOxygenPct / SIMULATION_MODEL.oxygenPctPer100Meters * 100 /
     SIMULATION_MODEL.walkingSpeedMps / 60;
 
@@ -282,6 +307,9 @@ export default function App() {
               <div className="flex items-center gap-2 text-slate-300">
                 <span className="w-3 h-0.5 bg-red-500 inline-block" /> Emergency A* Escape
               </div>
+              <div className="flex items-center gap-2 text-slate-300">
+                <span className="w-3 h-0.5 bg-fuchsia-400 inline-block" /> Science-Weighted A*
+              </div>
               <div className="flex items-center justify-between text-slate-300">
                 <span className="flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded-full bg-rose-500/40 border border-rose-500 inline-block"></span> Slope &gt;15° No-Go
@@ -431,31 +459,16 @@ export default function App() {
 
                   {layers.mineral && (
                     <g>
-                      <ellipse
-                        cx="68"
-                        cy="44"
-                        rx="11"
-                        ry="7"
-                        fill="rgba(34, 211, 238, 0.28)"
-                        stroke="#22d3ee"
-                        strokeWidth="0.5"
-                      />
-                      <text x="59" y="35.5" fill="#cffafe" fontSize="2.1" fontWeight="bold" fontFamily="monospace">
-                        CRISM: HYDRATED SILICA
-                      </text>
-
-                      <ellipse
-                        cx="82"
-                        cy="24"
-                        rx="9"
-                        ry="6"
-                        fill="rgba(45, 212, 191, 0.28)"
-                        stroke="#2dd4bf"
-                        strokeWidth="0.5"
-                      />
-                      <text x="73" y="16.5" fill="#ccfbf1" fontSize="2.1" fontWeight="bold" fontFamily="monospace">
-                        MG-CARBONATES
-                      </text>
+                      {MINERAL_DEPOSITS.map((d) => (
+                        <g key={d.id}>
+                          <ellipse cx={d.cx} cy={d.cy} rx={d.rx} ry={d.ry} fill={d.fill} stroke={d.color} strokeWidth="0.5" />
+                          <ellipse cx={d.cx} cy={d.cy} rx={d.rx * 2.5} ry={d.ry * 2.5} fill="none" stroke={d.color}
+                            strokeWidth="0.2" strokeDasharray="0.6 0.8" opacity="0.6" />
+                          <text x={d.labelPos[0]} y={d.labelPos[1]} fill="#cffafe" fontSize="2.1" fontWeight="bold" fontFamily="monospace">
+                            {d.label}
+                          </text>
+                        </g>
+                      ))}
                     </g>
                   )}
 
@@ -506,6 +519,17 @@ export default function App() {
                   strokeDasharray={emergencyMode === 'nominal' ? 'none' : '1.2 1.2'}
                 />
 
+                {scienceSvgPath && emergencyMode === 'nominal' && routeChoice === 'science' && (
+                  <path
+                    aria-label="Science-weighted A* route"
+                    d={scienceSvgPath}
+                    fill="none"
+                    stroke="#e879f9"
+                    strokeWidth="1.05"
+                    strokeDasharray="0.8 0.8"
+                  />
+                )}
+
                 {customSvgPath && emergencyMode === 'nominal' && (
                   <path
                     d={customSvgPath}
@@ -513,6 +537,7 @@ export default function App() {
                     stroke="#fbbf24"
                     strokeWidth="1.05"
                     strokeDasharray="1.6 0.8"
+                    opacity={routeChoice === 'science' ? 0.45 : 1}
                   />
                 )}
 
@@ -837,6 +862,17 @@ export default function App() {
           </div>
         </aside>
       </div>
+
+      {/* Science Operations Deck */}
+      <section aria-label="Science operations" className="border-t border-slate-800 bg-gradient-to-b from-slate-900/70 to-slate-950 p-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <FieldSciencePanel wp={selectedWp} samples={samples} scans={scans} notes={notes}
+          onCollect={collectSample} onScan={runScan} onNote={addNote}
+          onRemove={(id) => setSamples((prev) => prev.filter((s) => s.id !== id))}
+          locked={emergencyMode !== 'nominal'} />
+        <SpectralAnalyzer key={selectedWp.id} wp={selectedWp} mineralLayer={layers.mineral} />
+        <RouteSciencePanel comparison={routeComparison} chosen={routeChoice} onChoose={setRouteChoice}
+          targetLabel={customTarget ? 'Custom target' : selectedWp.code} disabled={emergencyMode !== 'nominal'} />
+      </section>
 
       {/* Full-Screen Rover POV Lightbox Modal */}
       {expandedPov && (

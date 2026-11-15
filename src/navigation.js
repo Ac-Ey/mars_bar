@@ -9,6 +9,36 @@ export const SLOPE_HAZARDS = [
 export const DUST_TRAP = { x: 50, y: 82, radius: 11 };
 export const DEFAULT_TERRAIN = { blockedPolygons: SLOPE_HAZARDS, dustTraps: [DUST_TRAP] };
 
+// The terrain used when a caller passes none. Starts as the simulated terrain above;
+// call setDefaultTerrain(createGridTerrain(...)) once at startup to use real DEM-derived hazards.
+let activeTerrain = DEFAULT_TERRAIN;
+export const setDefaultTerrain = (terrain) => { activeTerrain = terrain ?? DEFAULT_TERRAIN; };
+export const getDefaultTerrain = () => activeTerrain;
+
+// Build terrain from the 50x50 hazard grid written by make_terrain.py (rows of '0'/'1', row 0 = top/north).
+export function createGridTerrain({ rows, dustTraps = [] }) {
+  if (!Array.isArray(rows) || rows.length !== GRID_SIZE || rows.some((r) => r.length !== GRID_SIZE)) {
+    throw new Error(`Terrain grid must be ${GRID_SIZE} x ${GRID_SIZE}.`);
+  }
+  return { blockedPolygons: [], dustTraps, blockedGrid: rows.map((r) => Array.from(r, (ch) => ch === '1')) };
+}
+
+const gridCellBlocked = (terrain, gx, gy) => terrain.blockedGrid?.[gy]?.[gx] === true;
+
+// Sample along the segment; each sample belongs to the cell floor(x / cellSize), matching the router.
+function isSegmentClearOfGrid(a, b, terrain) {
+  if (!terrain.blockedGrid) return true;
+  const cellSize = 100 / GRID_SIZE;
+  const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / cellSize / 0.02));
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const gx = Math.min(GRID_SIZE - 1, Math.max(0, Math.floor((a.x + (b.x - a.x) * t) / cellSize)));
+    const gy = Math.min(GRID_SIZE - 1, Math.max(0, Math.floor((a.y + (b.y - a.y) * t) / cellSize)));
+    if (gridCellBlocked(terrain, gx, gy)) return false;
+  }
+  return true;
+}
+
 const EPSILON = 1e-9;
 const cross = (a, b, c) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
 const onSegment = (a, b, p) => Math.abs(cross(a, b, p)) < EPSILON &&
@@ -32,16 +62,16 @@ export function pointInPolygon(point, polygon) {
   return inside;
 }
 
-// Check complete segments, including exact-position connectors, not only grid centers.
-export function isSegmentSafe(a, b, terrain = DEFAULT_TERRAIN) {
-  for (const polygon of terrain.blockedPolygons) {
+// Polygons and dust traps only (the original hazard shapes).
+function isSegmentClearOfShapes(a, b, terrain) {
+  for (const polygon of terrain.blockedPolygons ?? []) {
     if (pointInPolygon(a, polygon) || pointInPolygon(b, polygon)) return false;
     for (let i = 0; i < polygon.length; i++) {
       const next = polygon[(i + 1) % polygon.length];
       if (segmentsIntersect(a, b, { x: polygon[i][0], y: polygon[i][1] }, { x: next[0], y: next[1] })) return false;
     }
   }
-  for (const circle of terrain.dustTraps) {
+  for (const circle of terrain.dustTraps ?? []) {
     const dx = b.x - a.x, dy = b.y - a.y;
     const lengthSquared = dx * dx + dy * dy;
     const t = lengthSquared === 0 ? 0 : Math.max(0, Math.min(1,
@@ -51,12 +81,17 @@ export function isSegmentSafe(a, b, terrain = DEFAULT_TERRAIN) {
   return true;
 }
 
+// Check complete segments, including exact-position connectors, not only grid centers.
+export function isSegmentSafe(a, b, terrain = activeTerrain) {
+  return isSegmentClearOfShapes(a, b, terrain) && isSegmentClearOfGrid(a, b, terrain);
+}
+
 const validPoint = (p) => p && Number.isFinite(p.x) && Number.isFinite(p.y) &&
   p.x >= 0 && p.x <= 100 && p.y >= 0 && p.y <= 100;
 
 // options.costMultiplier(point) -> value in [options.minMultiplier, 1] biases safe cells
 // (used by science-weighted routing). Hazard blocking is never relaxed.
-export function runAStarRoute(startPct, endPct, terrain = DEFAULT_TERRAIN, options = {}) {
+export function runAStarRoute(startPct, endPct, terrain = activeTerrain, options = {}) {
   const multiplierFn = options.costMultiplier ?? null;
   const minMultiplier = multiplierFn ? Math.min(1, Math.max(0.05, options.minMultiplier ?? 0.05)) : 1;
   const blocked = (reason) => ({ blocked: true, reason, points: [], distanceMeters: null });
@@ -78,10 +113,11 @@ export function runAStarRoute(startPct, endPct, terrain = DEFAULT_TERRAIN, optio
       { x: x + cellSize, y: y + cellSize }, { x, y: y + cellSize }];
     // Conservatively block any cell touched by a hazard, including small hazards
     // entirely inside the cell. Layer switches only control visibility.
-    const safe = corners.every((p, i) => isSegmentSafe(p, corners[(i + 1) % 4], terrain)) &&
-      !terrain.blockedPolygons.some((poly) => poly.some(([px, py]) =>
+    const safe = !gridCellBlocked(terrain, gx, gy) &&
+      corners.every((p, i) => isSegmentClearOfShapes(p, corners[(i + 1) % 4], terrain)) &&
+      !(terrain.blockedPolygons ?? []).some((poly) => poly.some(([px, py]) =>
         px >= x && px <= x + cellSize && py >= y && py <= y + cellSize)) &&
-      !terrain.dustTraps.some((c) => c.x >= x && c.x <= x + cellSize && c.y >= y && c.y <= y + cellSize);
+      !(terrain.dustTraps ?? []).some((c) => c.x >= x && c.x <= x + cellSize && c.y >= y && c.y <= y + cellSize);
     const p = center({ x: gx, y: gy });
     let cost = safe ? (Math.hypot(p.x - 68, p.y - 44) < 9 ? 0.85 : 1) : Infinity;
     if (safe && multiplierFn) cost *= Math.min(1, Math.max(minMultiplier, multiplierFn(p)));

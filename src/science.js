@@ -1,7 +1,9 @@
 // Field-science model: CRISM deposits, synthetic spectra, instrument scans and route scoring.
 // All values are illustrative simulation inputs inspired by published Jezero spectroscopy,
 // not calibrated NASA measurements.
-import { runAStarRoute, SLOPE_HAZARDS, DUST_TRAP, METERS_PER_MAP_UNIT, DEFAULT_TERRAIN } from './navigation.js';
+import {
+  runAStarRoute, SLOPE_HAZARDS, DUST_TRAP, METERS_PER_MAP_UNIT, GRID_SIZE, getDefaultTerrain,
+} from './navigation.js';
 
 export const TUBE_CAPACITY = 10;
 export const TUBE_MASS_KG = { core: 0.12, regolith: 0.09 }; // tube + sample, simulated
@@ -118,7 +120,23 @@ const distToSegment = (p, a, b) => {
   return Math.hypot(p.x - (a[0] + t * dx), p.y - (a[1] + t * dy));
 };
 
-export function hazardClearance(p) {
+export function hazardClearance(p, terrain = getDefaultTerrain()) {
+  if (terrain.blockedGrid) {
+    const cellSize = 100 / GRID_SIZE;
+    let best = Infinity;
+    for (let gy = 0; gy < GRID_SIZE; gy++) {
+      for (let gx = 0; gx < GRID_SIZE; gx++) {
+        if (!terrain.blockedGrid[gy][gx]) continue;
+        const left = gx * cellSize, right = left + cellSize;
+        const top = gy * cellSize, bottom = top + cellSize;
+        const dx = Math.max(left - p.x, 0, p.x - right);
+        const dy = Math.max(top - p.y, 0, p.y - bottom);
+        best = Math.min(best, Math.hypot(dx, dy));
+      }
+    }
+    return Number.isFinite(best) ? best : 100;
+  }
+
   let best = Math.hypot(p.x - DUST_TRAP.x, p.y - DUST_TRAP.y) - DUST_TRAP.radius;
   for (const poly of SLOPE_HAZARDS) {
     for (let i = 0; i < poly.length; i++) best = Math.min(best, distToSegment(p, poly[i], poly[(i + 1) % poly.length]));
@@ -126,7 +144,7 @@ export function hazardClearance(p) {
   return Math.max(0, best);
 }
 
-export function scoreRoute(route, referenceDistance) {
+export function scoreRoute(route, referenceDistance, terrain = getDefaultTerrain()) {
   if (!route || route.blocked || route.points.length < 2) return null;
   const samples = samplePolyline(route.points);
   const peaks = MINERAL_DEPOSITS.map((d) => ({
@@ -139,21 +157,21 @@ export function scoreRoute(route, referenceDistance) {
   const dwellMeters = samples.reduce((s, p) => s + (scienceInfluenceAt(p) >= 0.5 ? p.seg : 0), 0) * METERS_PER_MAP_UNIT;
   const scienceScore = Math.round(100 * (0.75 * proximity + 0.25 * Math.min(1, dwellMeters / 300)));
 
-  const minClearanceMeters = Math.min(...samples.map(hazardClearance)) * METERS_PER_MAP_UNIT;
+  const minClearanceMeters = Math.min(...samples.map((sample) => hazardClearance(sample, terrain))) * METERS_PER_MAP_UNIT;
   const efficiency = referenceDistance ? Math.min(1, referenceDistance / route.distanceMeters) : 1;
   const safetyScore = Math.round(70 * Math.min(1, minClearanceMeters / 80) + 30 * efficiency);
 
   return { scienceScore, safetyScore, proximity, dwellMeters, minClearanceMeters, peaks, distanceMeters: route.distanceMeters };
 }
 
-export function compareRoutes(start, end, terrain = DEFAULT_TERRAIN) {
+export function compareRoutes(start, end, terrain = getDefaultTerrain()) {
   const safest = runAStarRoute(start, end, terrain);
   const science = runAStarRoute(start, end, terrain, {
     costMultiplier: (p) => 1 - 0.6 * scienceInfluenceAt(p), minMultiplier: 0.4,
   });
   const ref = safest.blocked ? null : safest.distanceMeters;
   return {
-    safest: { route: safest, score: scoreRoute(safest, ref) },
-    science: { route: science, score: scoreRoute(science, ref) },
+    safest: { route: safest, score: scoreRoute(safest, ref, terrain) },
+    science: { route: science, score: scoreRoute(science, ref, terrain) },
   };
 }

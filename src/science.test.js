@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compareRoutes, scienceInfluenceAt, scoreRoute, mixedSpectrum, SCIENCE_PROFILES } from './science.js';
-import { isSegmentSafe } from './navigation.js';
+import { compareRoutes, scienceInfluenceAt, scoreRoute, mixedSpectrum, SCIENCE_PROFILES, hazardClearance } from './science.js';
+import { createGridTerrain, isSegmentSafe } from './navigation.js';
 
 test('influence is 1 inside deposits and 0 far away', () => {
   assert.equal(scienceInfluenceAt({ x: 68, y: 44 }), 1);
@@ -15,6 +15,21 @@ test('science-weighted route scores >= safest on science and stays hazard-free',
   for (let i = 1; i < science.route.points.length; i++) {
     assert.ok(isSegmentSafe(science.route.points[i - 1], science.route.points[i]));
   }
+});
+
+test('science-weighted routes honor grid hazards and score clearance from blocked cells', () => {
+  const rows = Array.from({ length: 50 }, (_, y) =>
+    Array.from({ length: 50 }, (_, x) => x === 25 && y !== 10 ? '1' : '0').join(''));
+  const terrain = createGridTerrain({ rows });
+  const { safest, science } = compareRoutes({ x: 10, y: 50 }, { x: 90, y: 50 }, terrain);
+
+  for (const route of [safest.route, science.route]) {
+    assert.ok(!route.blocked);
+    for (let i = 1; i < route.points.length; i++) {
+      assert.ok(isSegmentSafe(route.points[i - 1], route.points[i], terrain));
+    }
+  }
+  assert.equal(hazardClearance({ x: 49, y: 51 }, terrain), 1);
 });
 
 test('scores are bounded and blocked routes return null', () => {

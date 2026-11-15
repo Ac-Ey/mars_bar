@@ -1,8 +1,12 @@
 import { useState, useMemo, useEffect } from 'react';
 import { WAYPOINTS, NOMINAL_PATH } from './missionData.js';
-import { runAStarRoute, SLOPE_HAZARDS, DUST_TRAP } from './navigation.js';
+import { runAStarRoute, getDefaultTerrain } from './navigation.js';
+import { blockedRects } from './terrainView.js';
 import { planEmergency, planMission, SIMULATION_MODEL } from './missionSafety.js';
 import { EmergencyPanel, OxygenPanel } from './SafetyPanels.jsx';
+import { LiveRoverStrip } from './LiveRoverStrip.jsx';
+import { EvaWalkPanel } from './EvaWalkPanel.jsx';
+import { useEvaWalk, useReturnSafety } from './useEvaWalk.js';
 import { MINERAL_DEPOSITS, TUBE_CAPACITY, TUBE_MASS_KG, compareRoutes } from './science.js';
 import { FieldSciencePanel, SpectralAnalyzer, RouteSciencePanel } from './SciencePanels.jsx';
 
@@ -35,6 +39,7 @@ import {
 
 export default function App() {
   const [viewMode, setViewMode] = useState('tactical'); // 'tactical' | 'visor'
+  const hazardRects = useMemo(() => blockedRects(getDefaultTerrain()), []);
   const [layers, setLayers] = useState({
     optical: true,
     slope: true,
@@ -47,24 +52,44 @@ export default function App() {
   const [emergencyMode, setEmergencyMode] = useState('nominal');
   const [astronautPos, setAstronautPos] = useState({ x: 64, y: 47 });
   const [expandedPov, setExpandedPov] = useState(false);
+  const [openedLiveImage, setOpenedLiveImage] = useState(null);
 
   const [customTarget, setCustomTarget] = useState(null);
   const [routeWarning, setRouteWarning] = useState('');
   const [availableOxygenPct, setAvailableOxygenPct] = useState(84);
   const [explorationMinutes, setExplorationMinutes] = useState(30);
   const [reservePct, setReservePct] = useState(15);
+  const eva = useEvaWalk();
+  const currentAstronautPos = eva.position ?? astronautPos;
+  const currentOxygenPct = eva.walk?.oxygenPct ?? availableOxygenPct;
+  const routeStartX = eva.position ? Math.round(eva.position.x * 2) / 2 : astronautPos.x;
+  const routeStartY = eva.position ? Math.round(eva.position.y * 2) / 2 : astronautPos.y;
+  const planningOxygenPct = eva.walk
+    ? Math.round(currentOxygenPct * 10) / 10
+    : currentOxygenPct;
+  const target = customTarget ?? selectedWp;
 
   const missionPlan = useMemo(() => planMission({
-    start: astronautPos, target: customTarget ?? selectedWp, returnDestination: WAYPOINTS[0],
-    availableOxygenPct, explorationMinutes, reservePct,
-  }), [astronautPos, customTarget, selectedWp, availableOxygenPct, explorationMinutes, reservePct]);
+    start: { x: routeStartX, y: routeStartY }, target, returnDestination: WAYPOINTS[0],
+    availableOxygenPct: planningOxygenPct, explorationMinutes, reservePct,
+  }), [routeStartX, routeStartY, target, planningOxygenPct, explorationMinutes, reservePct]);
 
-  const visorRoute = useMemo(() => runAStarRoute(astronautPos, selectedWp), [astronautPos, selectedWp]);
+  const visorRoute = useMemo(
+    () => runAStarRoute({ x: routeStartX, y: routeStartY }, selectedWp),
+    [routeStartX, routeStartY, selectedWp],
+  );
 
   const emergencyPlan = useMemo(() => emergencyMode === 'nominal' ? null : planEmergency({
-    start: astronautPos, emergencyType: emergencyMode, waypoints: WAYPOINTS,
-    availableOxygenPct, reservePct,
-  }), [astronautPos, emergencyMode, availableOxygenPct, reservePct]);
+    start: { x: routeStartX, y: routeStartY }, emergencyType: emergencyMode, waypoints: WAYPOINTS,
+    availableOxygenPct: planningOxygenPct, reservePct,
+  }), [routeStartX, routeStartY, emergencyMode, planningOxygenPct, reservePct]);
+  const returnSafety = useReturnSafety({
+    position: eva.position,
+    oxygenPct: currentOxygenPct,
+    reservePct,
+    home: WAYPOINTS[0],
+    enabled: Boolean(eva.walk),
+  });
 
   // ---- Field science state (persisted across reloads) ----
   const [samples, setSamples] = useState(() => loadStored('ares.samples', []));
@@ -75,8 +100,9 @@ export default function App() {
   useEffect(() => { localStorage.setItem('ares.scans', JSON.stringify(scans)); }, [scans]);
   useEffect(() => { localStorage.setItem('ares.notes', JSON.stringify(notes)); }, [notes]);
 
-  const routeComparison = useMemo(() => compareRoutes(astronautPos, customTarget ?? selectedWp),
-    [astronautPos, customTarget, selectedWp]);
+  const routeComparison = useMemo(() => compareRoutes(
+    { x: routeStartX, y: routeStartY }, target,
+  ), [routeStartX, routeStartY, target]);
 
   const collectSample = (type) => setSamples((prev) => prev.length >= TUBE_CAPACITY ? prev : [...prev,
     { id: `${Date.now()}-${prev.length}`, wpId: selectedWp.id, wpCode: selectedWp.code, type, massKg: TUBE_MASS_KG[type], time: clock() }]);
@@ -90,12 +116,12 @@ export default function App() {
   };
 
   const handleMapClick = (e) => {
-    if (emergencyMode !== 'nominal') return;
+    if (emergencyMode !== 'nominal' || eva.walk) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const x = Number((((e.clientX - rect.left) / rect.width) * 100).toFixed(1));
     const y = Number((((e.clientY - rect.top) / rect.height) * 100).toFixed(1));
 
-    const testRoute = runAStarRoute(astronautPos, { x, y });
+    const testRoute = runAStarRoute(currentAstronautPos, { x, y });
     if (testRoute.blocked) {
       setRouteWarning(`NO-GO: ${testRoute.reason}`);
       setCustomTarget({ x, y });
@@ -111,18 +137,35 @@ export default function App() {
   };
 
   const triggerScenario = (mode) => {
+    const wasWalking = Boolean(eva.walk);
+    const scenarioOxygenPct = { nominal: 84, solar_flare: 79, o2_leak: 41 }[mode];
+    const scenarioAvailableOxygenPct = wasWalking ? currentOxygenPct : scenarioOxygenPct;
     setEmergencyMode(mode);
     setCustomTarget(null);
     setRouteWarning('');
-    setAvailableOxygenPct({ nominal: 84, solar_flare: 79, o2_leak: 41 }[mode]);
-    const escape = mode === 'nominal' ? null : planEmergency({
-      start: astronautPos, emergencyType: mode, waypoints: WAYPOINTS,
-      availableOxygenPct, reservePct,
+    if (mode === 'nominal') {
+      if (eva.walk) {
+        setAstronautPos(eva.walk.origin);
+        eva.reset();
+      }
+      setAvailableOxygenPct(scenarioOxygenPct);
+      setSelectedWp(WAYPOINTS[2]);
+      return;
+    }
+
+    if (!wasWalking) setAvailableOxygenPct(scenarioOxygenPct);
+    const escape = planEmergency({
+      start: currentAstronautPos, emergencyType: mode, waypoints: WAYPOINTS,
+      availableOxygenPct: scenarioAvailableOxygenPct, reservePct,
     });
+    if (wasWalking) {
+      if (escape.route) eva.start(escape.route.points, scenarioAvailableOxygenPct);
+      else eva.pause();
+    }
     if (mode === 'solar_flare') {
       setLayers((prev) => ({ ...prev, radiation: true }));
     }
-    setSelectedWp(escape?.destination ?? WAYPOINTS[2]);
+    setSelectedWp(escape.destination ?? WAYPOINTS[2]);
   };
 
   const telemetry = {
@@ -157,8 +200,52 @@ export default function App() {
   const customSvgPath = toSvgPath(missionPlan.outboundRoute);
   const emergencySvgPath = toSvgPath(emergencyPlan?.route);
   const scienceSvgPath = toSvgPath(routeComparison.science.route);
-  const remainingWalkMinutes = availableOxygenPct / SIMULATION_MODEL.oxygenPctPer100Meters * 100 /
+  const remainingWalkMinutes = currentOxygenPct / SIMULATION_MODEL.oxygenPctPer100Meters * 100 /
     SIMULATION_MODEL.walkingSpeedMps / 60;
+  const startEvaWalk = () => {
+    if (eva.walk && !eva.walk.done) {
+      eva.resume();
+      return;
+    }
+    const route = emergencyMode === 'nominal'
+      ? runAStarRoute(currentAstronautPos, target)
+      : planEmergency({
+        start: currentAstronautPos, emergencyType: emergencyMode, waypoints: WAYPOINTS,
+        availableOxygenPct: currentOxygenPct, reservePct,
+      }).route;
+    if (route && !route.blocked) eva.start(route.points, currentOxygenPct);
+    else setRouteWarning(`NO-GO: ${route?.reason ?? 'No suitable emergency route is available.'}`);
+  };
+  const resetEvaWalk = () => {
+    if (eva.walk) {
+      setAstronautPos(eva.walk.origin);
+      setAvailableOxygenPct(eva.walk.startingOxygenPct ?? currentOxygenPct);
+    }
+    eva.reset();
+  };
+  const lightboxImage = openedLiveImage
+    ? {
+      source: openedLiveImage.large,
+      alt: `${openedLiveImage.instrument} Sol ${openedLiveImage.sol}`,
+      instrument: openedLiveImage.instrument,
+      code: `SOL ${openedLiveImage.sol}`,
+      title: openedLiveImage.title,
+      description: `Public raw images, ${openedLiveImage.credit}.`,
+    }
+    : expandedPov
+      ? {
+        source: selectedWp.povImage,
+        alt: selectedWp.povTitle,
+        instrument: selectedWp.povInstrument,
+        code: selectedWp.code,
+        title: selectedWp.povTitle,
+        description: selectedWp.povDesc,
+      }
+      : null;
+  const closeLightbox = () => {
+    setExpandedPov(false);
+    setOpenedLiveImage(null);
+  };
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans flex flex-col selection:bg-orange-500/30">
@@ -222,9 +309,9 @@ export default function App() {
       </header>
 
       {/* Main 3-Column Workspace */}
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-0">
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-12 gap-0">
         {/* LEFT PANEL: NASA Data Layers & Anomaly Simulator */}
-        <aside className="lg:col-span-3 border-r border-slate-800 bg-slate-900/50 p-4 flex flex-col justify-between gap-5">
+        <aside className="mission-panel-scroll lg:col-span-1 xl:col-span-3 lg:max-h-[min(760px,calc(100vh-5rem))] lg:overflow-y-auto border-r border-slate-800 bg-slate-900/50 p-4 flex flex-col justify-between gap-5">
           <div className="space-y-3.5">
             <div className="flex items-center justify-between text-xs font-mono uppercase tracking-wider text-slate-400">
               <span className="flex items-center gap-2">
@@ -232,7 +319,7 @@ export default function App() {
                 NASA Data Layers
               </span>
             </div>
-            <p className="text-[10px] text-slate-500">NASA imagery references; overlay geometry and all numeric telemetry are simulated.</p>
+            <p className="text-[10px] text-slate-500">USGS HiRISE-derived slope hazards; waypoint geometry, other overlays, and telemetry are simulated.</p>
 
             <div className="space-y-2">
               <LayerToggle
@@ -249,7 +336,7 @@ export default function App() {
                 title="Topographic Slope Hazards"
                 instrument="HiRISE DTM Elevation"
                 badgeColor="bg-rose-500"
-                desc="Simulated >15° no-go threshold & steep scarps"
+                desc="Real slope >15° from USGS HiRISE terrain model"
               />
               <LayerToggle
                 active={layers.mineral}
@@ -265,7 +352,7 @@ export default function App() {
                 title="Radiation & Thermal Inertia"
                 instrument="MSL RAD + Odyssey THEMIS"
                 badgeColor="bg-purple-500"
-                desc="Surface dose rates & deep dust trap zones"
+                desc="Simulated surface dose rates"
               />
             </div>
 
@@ -318,9 +405,24 @@ export default function App() {
               </div>
             </div>
             <OxygenPanel plan={missionPlan} targetLabel={customTarget ? 'Custom map target' : selectedWp.code}
-              availableOxygenPct={availableOxygenPct} setAvailableOxygenPct={setAvailableOxygenPct}
+              availableOxygenPct={currentOxygenPct} setAvailableOxygenPct={setAvailableOxygenPct}
               explorationMinutes={explorationMinutes} setExplorationMinutes={setExplorationMinutes}
-              reservePct={reservePct} setReservePct={setReservePct} emergencyActive={emergencyMode !== 'nominal'} />
+              reservePct={reservePct} setReservePct={setReservePct} emergencyActive={emergencyMode !== 'nominal'}
+              oxygenReadOnly={Boolean(eva.walk)} />
+            <EvaWalkPanel
+              walk={eva.walk}
+              running={eva.running}
+              speedup={eva.speedup}
+              setSpeedup={eva.setSpeedup}
+              safety={returnSafety}
+              routeAvailable={emergencyMode === 'nominal'
+                ? !missionPlan.outboundRoute.blocked
+                : Boolean(emergencyPlan?.route)}
+              onStart={startEvaWalk}
+              onPause={eva.pause}
+              onResume={eva.resume}
+              onReset={resetEvaWalk}
+            />
           </div>
 
           {/* Contingency Simulator Controls */}
@@ -370,7 +472,7 @@ export default function App() {
 
         {/* CENTER PANEL: Switches between Tactical Orbital Map & First-Person Helmet Visor AR HUD */}
         {viewMode === 'tactical' ? (
-          <main className="lg:col-span-6 relative bg-stone-950 flex flex-col min-h-[520px] overflow-hidden">
+          <main className="lg:col-span-1 xl:col-span-6 relative bg-stone-950 flex flex-col min-h-[520px] overflow-hidden">
             <div className="absolute top-3 left-3 right-3 z-20 flex justify-between items-center pointer-events-none">
               <div className="bg-slate-950/85 backdrop-blur-md border border-slate-800 px-3 py-1.5 rounded-md text-[11px] font-mono text-slate-300 flex items-center gap-3">
                 <span>GRID: JEZERO-W-09</span>
@@ -401,7 +503,7 @@ export default function App() {
                   onError={(e) => {
                     e.currentTarget.style.display = 'none';
                   }}
-                  className="absolute inset-0 w-full h-full object-cover brightness-90 contrast-110"
+                  className="absolute inset-0 w-full h-full object-fill brightness-90 contrast-110"
                 />
               )}
 
@@ -433,26 +535,12 @@ export default function App() {
                 <g style={{ opacity: overlayOpacity }}>
                   {layers.slope && (
                     <g>
-                      <polygon
-                        points={SLOPE_HAZARDS[0].map((p) => p.join(',')).join(' ')}
-                        fill="rgba(244, 63, 94, 0.34)"
-                        stroke="#f43f5e"
-                        strokeWidth="0.45"
-                        strokeDasharray="1.2 0.8"
-                      />
-                      <text x="25" y="30" fill="#ffe4e6" fontSize="2.2" fontWeight="bold" fontFamily="monospace">
-                        SLOPE 22° (NO-GO)
-                      </text>
-
-                      <polygon
-                        points={SLOPE_HAZARDS[1].map((p) => p.join(',')).join(' ')}
-                        fill="rgba(244, 63, 94, 0.34)"
-                        stroke="#f43f5e"
-                        strokeWidth="0.45"
-                        strokeDasharray="1.2 0.8"
-                      />
-                      <text x="77" y="58" fill="#ffe4e6" fontSize="2.2" fontWeight="bold" fontFamily="monospace">
-                        SCARP 19°
+                      {hazardRects.map((r) => (
+                        <rect key={`${r.x}-${r.y}`} x={r.x} y={r.y} width={r.w} height={r.h}
+                          fill="rgba(244, 63, 94, 0.34)" stroke="#f43f5e" strokeWidth="0.15" />
+                      ))}
+                      <text x="2" y="97" fill="#ffe4e6" fontSize="2.2" fontWeight="bold" fontFamily="monospace">
+                        SLOPE &gt;15° NO-GO • USGS HiRISE DTM
                       </text>
                     </g>
                   )}
@@ -485,18 +573,6 @@ export default function App() {
                             : 'rgba(168, 85, 247, 0.2)'
                         }
                       />
-                      <circle
-                        cx={DUST_TRAP.x}
-                        cy={DUST_TRAP.y}
-                        r={DUST_TRAP.radius}
-                        fill="rgba(168, 85, 247, 0.3)"
-                        stroke="#c084fc"
-                        strokeWidth="0.45"
-                        strokeDasharray="1 1"
-                      />
-                      <text x="41" y="83" fill="#f3e8ff" fontSize="2.1" fontWeight="bold" fontFamily="monospace">
-                        LOW THERMAL INERTIA (DUST TRAP)
-                      </text>
                     </g>
                   )}
                 </g>
@@ -594,7 +670,7 @@ export default function App() {
               )}
 
               <div
-                style={{ left: `${astronautPos.x}%`, top: `${astronautPos.y}%` }}
+                style={{ left: `${currentAstronautPos.x}%`, top: `${currentAstronautPos.y}%` }}
                 className="absolute -translate-x-1/2 -translate-y-1/2 z-20 pointer-events-none flex flex-col items-center"
               >
                 <span className="relative flex h-4 w-4">
@@ -640,16 +716,17 @@ export default function App() {
                     prev.x === 64 ? { x: 42, y: 62 } : { x: 64, y: 47 }
                   )
                 }
-                className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-mono text-[11px] flex items-center gap-1.5"
+                disabled={Boolean(eva.walk)}
+                className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-mono text-[11px] flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Navigation className="w-3 h-3 text-sky-400" />
-                {astronautPos.x === 64 ? 'Move EVA-1 to Rover' : 'Move EVA-1 to SCI-A'}
+                {eva.walk ? 'EVA walk active' : currentAstronautPos.x === 64 ? 'Move EVA-1 to Rover' : 'Move EVA-1 to SCI-A'}
               </button>
             </div>
           </main>
         ) : (
           /* FIRST-PERSON ASTRONAUT HELMET VISOR AR HUD VIEW */
-          <main className="lg:col-span-6 relative bg-black flex flex-col min-h-[520px] overflow-hidden select-none">
+          <main className="lg:col-span-1 xl:col-span-6 relative bg-black flex flex-col min-h-[520px] overflow-hidden select-none">
             {/* First-Person Ground Imagery */}
             <img
               src={selectedWp.povImage}
@@ -759,7 +836,7 @@ export default function App() {
         )}
 
         {/* RIGHT PANEL: Suit Telemetry & Surface POV Waypoint Card */}
-        <aside className="lg:col-span-3 border-l border-slate-800 bg-slate-900/50 p-4 flex flex-col justify-between gap-4">
+        <aside className="mission-panel-scroll lg:col-span-2 xl:col-span-3 lg:max-h-[min(760px,calc(100vh-5rem))] lg:overflow-y-auto border-l border-slate-800 bg-slate-900/50 p-4 flex flex-col justify-start gap-4">
           <div className="space-y-2.5">
             <div className="flex items-center justify-between text-xs font-mono uppercase tracking-wider text-slate-400">
               <span className="flex items-center gap-1.5">
@@ -773,8 +850,8 @@ export default function App() {
               <TelemetryBox
                 icon={<Wind className="w-3.5 h-3.5 text-sky-400" />}
                 label="Primary O₂"
-                value={Number.isFinite(availableOxygenPct) ? `${availableOxygenPct}%` : '—'}
-                sub={availableOxygenPct >= 0 && availableOxygenPct <= 100 ? `~${Math.floor(remainingWalkMinutes)} min walking • SIM` : 'Invalid supply'}
+                value={Number.isFinite(currentOxygenPct) ? `${currentOxygenPct.toFixed(1)}%` : '—'}
+                sub={currentOxygenPct >= 0 && currentOxygenPct <= 100 ? `~${Math.floor(remainingWalkMinutes)} min walking • SIM` : 'Invalid supply'}
                 alert={emergencyMode === 'o2_leak'}
               />
               <TelemetryBox
@@ -797,10 +874,10 @@ export default function App() {
                 sub={`${SIMULATION_MODEL.walkingSpeedMps} m/s simulated pace`}
               />
             </div>
-            <EmergencyPanel plan={emergencyPlan} emergencyMode={emergencyMode} availableOxygenPct={availableOxygenPct} />
+            <EmergencyPanel plan={emergencyPlan} emergencyMode={emergencyMode} availableOxygenPct={currentOxygenPct} />
           </div>
 
-          <div className="flex-1 flex flex-col justify-between rounded-xl bg-slate-950 border border-slate-800 overflow-hidden">
+          <div className="flex flex-col self-start w-full rounded-xl bg-slate-950 border border-slate-800 overflow-hidden">
             <div>
               <div
                 onClick={() => setExpandedPov(true)}
@@ -874,10 +951,14 @@ export default function App() {
           targetLabel={customTarget ? 'Custom target' : selectedWp.code} disabled={emergencyMode !== 'nominal'} />
       </section>
 
-      {/* Full-Screen Rover POV Lightbox Modal */}
-      {expandedPov && (
+      <div className="border-t border-slate-800 bg-slate-900/50 p-4">
+        <LiveRoverStrip onOpen={setOpenedLiveImage} />
+      </div>
+
+      {/* Full-Screen Rover Image Lightbox Modal */}
+      {lightboxImage && (
         <div
-          onClick={() => setExpandedPov(false)}
+          onClick={closeLightbox}
           className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-6"
         >
           <div
@@ -887,12 +968,13 @@ export default function App() {
             <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
               <div>
                 <span className="text-[11px] font-mono text-orange-400">
-                  {selectedWp.povInstrument} • {selectedWp.code}
+                  {lightboxImage.instrument} • {lightboxImage.code}
                 </span>
-                <h3 className="text-sm font-bold text-white">{selectedWp.povTitle}</h3>
+                <h3 className="text-sm font-bold text-white">{lightboxImage.title}</h3>
               </div>
               <button
-                onClick={() => setExpandedPov(false)}
+                onClick={closeLightbox}
+                aria-label="Close image"
                 className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
               >
                 <X className="w-4 h-4" />
@@ -900,13 +982,13 @@ export default function App() {
             </div>
             <div className="bg-black flex items-center justify-center min-h-[320px] max-h-[70vh]">
               <img
-                src={selectedWp.povImage}
-                alt={selectedWp.povTitle}
+                src={lightboxImage.source}
+                alt={lightboxImage.alt}
                 className="max-h-[70vh] w-auto object-contain"
               />
             </div>
             <div className="px-4 py-3 bg-slate-950 text-xs text-slate-300">
-              {selectedWp.povDesc}
+              {lightboxImage.description}
             </div>
           </div>
         </div>

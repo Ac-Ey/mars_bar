@@ -16,22 +16,23 @@ function SafetyRow({ label, children }) {
   </div>;
 }
 
-function NumericInput({ label, value, onChange, max }) {
+function NumericInput({ label, value, onChange, max, disabled = false }) {
   return <label className="text-[11px] text-slate-400 flex flex-col gap-1">
     {label}
     <input type="number" min="0" max={max} step="1" value={Number.isNaN(value) ? '' : value}
+      disabled={disabled}
       onChange={(e) => onChange(e.target.value === '' ? NaN : Number(e.target.value))}
-      className="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100 font-mono focus:outline-orange-400" />
+      className="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-slate-100 font-mono focus:outline-orange-400 disabled:cursor-not-allowed disabled:opacity-50" />
   </label>;
 }
 
 export function OxygenPanel({ plan, targetLabel, availableOxygenPct, setAvailableOxygenPct,
-  explorationMinutes, setExplorationMinutes, reservePct, setReservePct, emergencyActive }) {
+  explorationMinutes, setExplorationMinutes, reservePct, setReservePct, emergencyActive, oxygenReadOnly = false }) {
   return <section aria-label="EVA oxygen safety calculator" className="rounded-lg border border-slate-800 bg-slate-950/90 p-3 space-y-2">
     <h2 className="text-xs font-mono text-sky-300 flex items-center gap-1.5"><Wind className="w-4 h-4" /> EVA O₂ / RETURN SAFETY</h2>
     <p className="text-[11px] text-slate-400">EVA-1 → {targetLabel} → HAB-01</p>
     <div className="grid grid-cols-2 gap-2">
-      <NumericInput label="Available O₂ (%)" value={availableOxygenPct} onChange={setAvailableOxygenPct} max="100" />
+      <NumericInput label="Available O₂ (%)" value={availableOxygenPct} onChange={setAvailableOxygenPct} max="100" disabled={oxygenReadOnly} />
       <NumericInput label="Emergency reserve (%)" value={reservePct} onChange={setReservePct} max="100" />
       <NumericInput label="Exploration time (min)" value={explorationMinutes} onChange={setExplorationMinutes} />
       <div className={`self-end text-center rounded border px-1 py-1 font-mono text-sm font-bold ${statusColors[plan.status]}`}>

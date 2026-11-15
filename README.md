@@ -15,16 +15,17 @@ GitHub Code Repo: https://github.com/Ac-Ey/mars_bar
 A. Toggle NASA Multi-Mission Layers (Left Panel)
 
 ⚬ Optical Surface Imagery (MRO HiRISE): High-res orbital surface basemap of Jezero Crater.
-⚬ Topographic Slope Hazards (HiRISE DTM): Highlights steep cliffs (>15°) as red No-Go zones to prevent spacesuit tip-overs.
+⚬ Topographic Slope Hazards (USGS HiRISE DTM): Shows cells above the 15° slope threshold as red No-Go areas; the source crop's maximum slope is 58.6°.
 ⚬ Mineral & Biosignatures (MRO CRISM): Marks high-value hydrated silica and carbonate science targets.
-⚬ Radiation & Thermal Inertia (MSL RAD + Odyssey THEMIS): Shows radiation dose rates and soft dust traps.
-⚬ Data Overlay Opacity Slider: Adjust transparency (15%–100%) to inspect the raw orbital surface beneath the polygons.
+⚬ Radiation & Thermal Inertia (MSL RAD + Odyssey THEMIS): Shows simulated surface dose rates.
+⚬ Data Overlay Opacity Slider: Adjust transparency (15%–100%) to inspect the raw orbital surface beneath the overlays.
 
-B. Click-to-Route A Pathfinder (Center Map)*
+B. Dynamic A* Pathfinder (Center Map)
 
-⚬ Click anywhere on the map to set a custom target (A* TGT).
-⚬ The built-in 50×50 A* pathfinder calculates an outbound route around simulated >15° slope hazards and blocked dust traps, displaying distance (m) and simulated outbound O₂ consumption (%) at the bottom. Hazard avoidance stays active even when a layer is hidden.
-⚬ Click inside a red NO-GO slope zone to test the safety block alert.
+⚬ The green traverse is a reference; the amber A* route is calculated from EVA-1's current position to the selected waypoint or a custom map target.
+⚬ Click safe terrain to set a custom target (A* TGT). The 50×50 pathfinder avoids grid cells classified as No-Go by the USGS HiRISE slope mask; the route distance (m) and simulated outbound O₂ use appear below the map.
+⚬ Click a blocked red cell to see the NO-GO warning. Hiding the slope overlay changes only its visibility; blocked cells still prevent routing.
+⚬ Routes recalculate when the target or EVA-1's position changes. Emergency scenarios calculate an escape route to an eligible reachable destination.
 ⚬ Use the Move EVA-1 button (bottom right of map) to simulate astronaut movement between the rover and science outcrop.
 
 C. Waypoint Inspection & Rover POV Photos (Right Panel)
@@ -44,12 +45,28 @@ E. Contingency & Emergency Simulator (Bottom Left)
 ⚬ Simulate Suit O₂ Drop: Sets simulated oxygen to 41% and routes to the closest reachable oxygen support by routed distance (RVR-04 or HAB-01).
 ⚬ Restore Nominal EVA Plan: Resets all suit vitals and restores the primary science route.
 
+F. Live EVA Walk (Left Panel)
+
+⚬ Select a target, then use Start EVA to walk along its A* route. Pause or resume the simulation at any time; Reset returns to the start of the current walk and restores the oxygen present when that walk began.
+⚬ Choose 1x, 10x, 20x, or 50x simulation speed (20x by default). EVA-1's map marker, route planning, emergency routing, and displayed O₂ follow the simulated walk.
+⚬ The return-safety check compares current O₂ with the A*-routed oxygen cost back to HAB-01 plus the configured reserve. OK means the reserve is preserved; WARNING means the remaining margin is small; TURN BACK means the reserve would be spent; CRITICAL means there is not enough O₂ for the return; NO ROUTE HOME means A* cannot find a safe return path.
+⚬ Trigger Solar Flare or Suit O₂ Drop during a walk to reroute EVA-1 from its current position to the appropriate emergency destination, preserving current O₂. These are simulations, not validated life-support predictions.
+
+G. Latest Perseverance Images (Below the Dashboard)
+
+⚬ The horizontal strip requests recent public raw images from NASA's Mars 2020 feed, sorted by rover sol.
+⚬ Up to six unique frames are shown with their instrument and sol. EBY and ECM image products from the same frame are deduplicated.
+⚬ Select a thumbnail to open the existing full-screen image lightbox at the larger image resolution. Close the lightbox to return to the dashboard.
+⚬ The feed is cached in memory for 10 minutes and the request times out after 6 seconds. If the feed is unavailable, the strip displays an unavailable/archive status; the rest of the dashboard remains usable.
+
 3. 60-Second Live Pitch Demo Order
 
-1. Start on Tactical Map and toggle the 4 NASA layers + opacity slider.
-2. Click above the red SLOPE 22° zone to show live A* obstacle avoidance, then click inside the red zone to trigger the safety warning.
+1. Start on Tactical Map and toggle the four map layers + opacity slider.
+2. Click safe terrain near a red slope cell to show A* obstacle avoidance, then click a red cell to trigger the safety warning.
 3. Switch to Helmet Visor HUD in the header and cycle through SCI-A and RVR-04.
 4. Click Simulate Solar Flare (SEP) to demonstrate real-time emergency rerouting.
+5. Start the Live EVA Walk toward a selected target; show the moving marker, O₂ burn, and return-safety status. Trigger an emergency to show a mid-walk reroute.
+6. Scroll below the dashboard, open a recent Perseverance thumbnail, and show it in the full-screen lightbox.
 
 ## Dynamic escape routing and oxygen planning
 
@@ -78,12 +95,15 @@ Run `npm run dev` and open the local URL printed by Vite (normally http://localh
 
 1. With default settings, select SCI-A: the total requirement should be about **31.7%**, including the 15% reserve and 30 minutes of exploration. Set available O₂ to 25% for CAUTION and 10% for NO-GO; 84% restores GO.
 2. Change exploration time and reserve; verify the component estimates and total update. Click a different waypoint or a map target to change the routed outbound and return distances.
-3. Click a red slope polygon or the dust-trap center (50% across, 82% down): expect a persistent blocked-target warning and a NO-GO mission preview. Hide the relevant layer and repeat; hazards must still block routing.
+3. Click a red slope cell: expect a persistent blocked-target warning and a NO-GO mission preview. Hide the slope layer and repeat; the real-terrain hazard must still block routing.
 4. Trigger Solar Flare: expect HAB-01, a red dashed route, and a warning that RVR-04 is not radiation-safe. Use Move EVA-1 to Rover: the route should now start at RVR-04 and the escape distance should decrease.
 5. Trigger Suit O₂ Drop while at RVR-04: expect RVR-04, zero distance/time/escape oxygen, and an already-at-destination message. Move back toward SCI-A to see a recalculated route to RVR-04.
 6. Away from the destination, set available O₂ to 0%: expect an oxygen-feasibility NO-GO warning while the terrain escape route remains visible. Increase oxygen and reserve to inspect GO/CAUTION transitions.
 7. Switch between Tactical Map and Helmet Visor HUD; the escape banner must use the calculated destination/distance. Inspect other waypoints and the photo lightbox during the emergency: inspection must not redirect the escape route.
 8. Restore Nominal EVA Plan: the emergency panel/route disappear, and normal planning resumes.
+9. With internet access, confirm that the latest-image strip loads, shows up to six thumbnails, and opens an image in the full-screen lightbox. If NASA's feed is unavailable, confirm the strip displays its unavailable/archive status and the rest of the dashboard still works.
+10. Start a Live EVA Walk to SCI-A and verify that the map marker moves and O₂ falls. Pause/resume it and change simulation speed. Confirm the return-safety banner progresses through its warning states as the remaining oxygen margin shrinks, then reset the walk.
+11. Start another walk, trigger Solar Flare or Suit O₂ Drop mid-walk, and verify that the escape route begins at the current EVA-1 position and uses the walk's remaining O₂ rather than resetting it to the scenario's starting value.
 
 ### Checks and code layout
 
@@ -92,15 +112,24 @@ Run `npm test`, `npm run lint`, and `npm run build`. Tests use Node's built-in t
 - `src/App.jsx`: existing dashboard, state, derived plans, map and visor integration.
 - `src/missionData.js`: existing waypoint metadata, explicit shelter/oxygen capabilities, reference traverse.
 - `src/navigation.js`: extracted and hardened 50×50 A*; shared hazard geometry used by both routing and map drawing.
+- `src/realTerrain.js`, `src/data/jezeroTerrain.json`, `src/terrainView.js`: load the HiRISE-derived 50×50 hazard grid for routing and render the same blocked cells on the map.
+- `src/terrainGrid.test.js`, `src/terrainView.test.js`: real-grid routing and map-rectangle coverage.
 - `src/missionSafety.js`: simulation coefficients, oxygen budget, round-trip and emergency planning.
 - `src/SafetyPanels.jsx`: oxygen controls and emergency information using the existing dashboard colors and typography.
+- `src/evaWalk.js`, `src/useEvaWalk.js`, `src/EvaWalkPanel.jsx`: route walking and O₂ consumption, animation/speed controls, return-safety checks, and walk controls.
+- `src/evaWalk.test.js`: route interpolation, simulated O₂ use, speed, and return-safety status tests.
+- `src/LiveRoverStrip.jsx`, `src/liveFeed.js`: NASA raw-image feed request, image normalization/deduplication, short-lived cache, thumbnail strip, and image lightbox integration.
 - `src/navigation.test.js`, `src/missionSafety.test.js`: hazard avoidance, exact endpoints, blocked/disconnected terrain, diagonal corner blocking, shelter eligibility/ranking, movement/arrival, resource formulas, invalid inputs, and decision thresholds.
 
 ### Assumptions and limitations
 
-**Simulation only; not validated real-world astronaut life-support predictions.** NASA image references are distinct from fictional waypoint placement, terrain geometry, threshold rules, and numeric telemetry. Existing imagery/instrument captions are retained; they do not establish georeferenced measurements for these simulated positions.
+**Simulation only; not validated real-world astronaut life-support predictions.** The slope overlay and routing grid are derived from the bundled USGS HiRISE DTM crop. Map positions and waypoint placements are schematic, the >15° cutoff is a chosen rule, and other overlays and numeric telemetry remain simulated. Existing imagery/instrument captions do not establish georeferenced measurements for the fictional waypoints.
 
-The map assumes 10 meters per percentage unit (a schematic 1 km square). The 50×50 grid conservatively blocks any cell touching a hazard, so it can reject narrow passages or safe points close to a hazard. A* retains the original lower traversal cost near the science outcrop; it optimizes grid traversal cost rather than a continuous shortest-distance path. Emergency candidates are compared by the distances of their calculated routes. To add destinations, explicitly set `radiationShelter` and/or `oxygenSupport`; names/types never imply protection.
+The latest-image strip uses NASA's public raw-image feed when available. It is not a live rover camera or telemetry stream; feed availability and image recency depend on NASA's service. A successful response is cached in the current page session for up to 10 minutes.
+
+The Live EVA Walk is also a time-accelerated simulation. Walking speed and oxygen use reuse the dashboard's fixed illustrative coefficients; terrain-driven exertion, real tank pressure, and physiological response are not modeled. The return-safety warning estimates a route to HAB-01 and cannot guarantee a real-world safe return.
+
+The map assumes 10 meters per percentage unit (a schematic 1 km square), so each 50×50 terrain cell covers 20 m. The >15° mask comes from the bundled DTM-derived crop; its resolution limits how precisely the route can follow slope boundaries. A* retains the original lower traversal cost near the science outcrop and optimizes grid traversal cost rather than a continuous shortest-distance path. Emergency candidates are compared by the distances of their calculated routes. To add destinations, explicitly set `radiationShelter` and/or `oxygenSupport`; names/types never imply protection.
 
 HAB-01 is assumed to provide oxygen and radiation shelter based on its existing scenario description. RVR-04 only provides oxygen support, with accessible spare tanks assumed. Surface transit during a flare is still exposed: there is no radiation-dose integration or shielding validation. The whole surface radiation overlay cannot be avoided by terrestrial routing; the planner heads to shelter while warning about exposure.
 
@@ -123,7 +152,7 @@ Collect and log science at each waypoint (HAB-01, RVR-04, SCI-A, SCI-B):
 - **Sample manifest**: a list of every tube (waypoint, type, mass, time), with an option to discard.
 - **Persistent**: samples, scans and notes are saved in `localStorage` and survive a page reload.
 - **Contingency lock**: all science actions are disabled during a Solar Flare or O₂ Leak emergency.
-- 
+
 ### 2. CRISM / PIXL Spectral Signature Analyzer
 Explains *why* a target has its biosignature priority:
 - **Reflectance spectrum (1.0–2.6 µm)**: a mixed spectrum for the selected waypoint, with an optional overlay of each mineral's individual curve.
@@ -134,15 +163,14 @@ Explains *why* a target has its biosignature priority:
   - `2.30 / 2.50 µm`: carbonate doublet (diagnostic for Mg-carbonates)
 - **Mineral composition breakdown**: percentage of each mineral (e.g. SCI-A: 46% hydrated silica, 31% Fe/Mg smectite, 23% sulfate).
 - **Biosignature priority breakdown**: the score (e.g. **98%** for SCI-A) is split into Aqueous Alteration, Organic Preservation, Context Value and Access/Safety, with a short scientific explanation.
-- 
+
 ### 3. Science Priority Scoring Along Routes (Science Yield Score)
 Compare routes by **Safety vs. Science Return** for any waypoint or custom map target:
 - **Two A\* routes** are computed from the astronaut's position:
-  - **Safety-Optimal**: the standard shortest safe path.
+  - **Standard A\***: a safe route that minimizes the pathfinder's traversal cost.
   - **Science-Weighted**: the path is pulled toward the CRISM deposits (Hydrated Silica, Mg-Carbonates) by lowering the travel cost of cells near them.
-- **Hazards are never relaxed**: both routes stay out of slope no-go zones and dust traps.
+- **Hazards are never relaxed**: both routes stay out of cells blocked by the active terrain. In real-DTM mode, routing uses the slope grid; it does not model dust traps.
 - **Science Score (0–100)** = 75% weighted closest approach to each deposit + 25% distance walked inside deposit zones (full credit at 300 m).
 - **Safety Score (0–100)** = 70% minimum clearance from hazards (full credit at 80 m) + 30% distance efficiency compared with the safest route.
 - **Per-deposit comparison**: e.g. `Hydrated Silica 40% → 100% proximity`.
 - **Map overlay**: select the Science-Weighted card to draw its route in pink. The mineral layer also shows each deposit's influence zone (2.5× its outline).
-

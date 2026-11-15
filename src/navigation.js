@@ -89,7 +89,11 @@ export function isSegmentSafe(a, b, terrain = activeTerrain) {
 const validPoint = (p) => p && Number.isFinite(p.x) && Number.isFinite(p.y) &&
   p.x >= 0 && p.x <= 100 && p.y >= 0 && p.y <= 100;
 
-export function runAStarRoute(startPct, endPct, terrain = activeTerrain) {
+// options.costMultiplier(point) -> value in [options.minMultiplier, 1] biases safe cells
+// (used by science-weighted routing). Hazard blocking is never relaxed.
+export function runAStarRoute(startPct, endPct, terrain = activeTerrain, options = {}) {
+  const multiplierFn = options.costMultiplier ?? null;
+  const minMultiplier = multiplierFn ? Math.min(1, Math.max(0.05, options.minMultiplier ?? 0.05)) : 1;
   const blocked = (reason) => ({ blocked: true, reason, points: [], distanceMeters: null });
   if (!validPoint(startPct) || !validPoint(endPct)) return blocked('Position is outside the simulation map or invalid.');
 
@@ -115,7 +119,8 @@ export function runAStarRoute(startPct, endPct, terrain = activeTerrain) {
         px >= x && px <= x + cellSize && py >= y && py <= y + cellSize)) &&
       !(terrain.dustTraps ?? []).some((c) => c.x >= x && c.x <= x + cellSize && c.y >= y && c.y <= y + cellSize);
     const p = center({ x: gx, y: gy });
-    const cost = safe ? (Math.hypot(p.x - 68, p.y - 44) < 9 ? 0.85 : 1) : Infinity;
+    let cost = safe ? (Math.hypot(p.x - 68, p.y - 44) < 9 ? 0.85 : 1) : Infinity;
+    if (safe && multiplierFn) cost *= Math.min(1, Math.max(minMultiplier, multiplierFn(p)));
     costCache.set(id, cost);
     return cost;
   }
@@ -131,7 +136,7 @@ export function runAStarRoute(startPct, endPct, terrain = activeTerrain) {
   const cameFrom = new Map();
   const gScore = new Map([[key(start.x, start.y), 0]]);
   // 0.85 is the minimum traversal cost, keeping the A* heuristic admissible.
-  const heuristic = (cell) => 0.85 * Math.hypot(goal.x - cell.x, goal.y - cell.y);
+  const heuristic = (cell) => 0.85 * minMultiplier * Math.hypot(goal.x - cell.x, goal.y - cell.y);
   const fScore = new Map([[key(start.x, start.y), heuristic(start)]]);
   const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
 
